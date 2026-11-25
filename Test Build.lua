@@ -302,7 +302,21 @@ local function buildWindow(state, opts)
 		toggleKey = Enum.KeyCode.RightShift
 	end
 
+	local mobile = opts.Mobile
+	if type(mobile) ~= "boolean" then
+		local ok, touchOnly = pcall(function()
+			return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+		end)
+		local vp0 = viewport()
+		mobile = (ok and touchOnly == true) or math.min(vp0.X, vp0.Y) < 500
+	end
+	local baseW, baseH, sideW = 976, 614, 150
+	if mobile then
+		baseW, baseH, sideW = 640, 400, 110
+	end
+
 	local Window = {}
+	Window.IsMobile = mobile
 	Window.Tabs = {}
 	Window.Visible = true
 	state.Window = Window
@@ -373,7 +387,7 @@ local function buildWindow(state, opts)
 			Name = "Window",
 			AnchorPoint = Vector2.new(0.5, 0.5),
 			Position = UDim2.fromScale(0.5, 0.5),
-			Size = UDim2.fromOffset(976, 614),
+			Size = UDim2.fromOffset(baseW, baseH),
 			BorderSizePixel = 0,
 			Parent = gui,
 		}, { corner(24) }),
@@ -385,7 +399,8 @@ local function buildWindow(state, opts)
 	local scale = new("UIScale", { Parent = main })
 	local function updateScale()
 		local vp = viewport()
-		scale.Scale = math.clamp(math.min((vp.X - 160) / 976, (vp.Y - 40) / 614), 0.4, 1)
+		local mx, my = mobile and 24 or 160, mobile and 24 or 40
+		scale.Scale = math.clamp(math.min((vp.X - mx) / baseW, (vp.Y - my) / baseH), 0.3, 1)
 	end
 	updateScale()
 	pcall(function()
@@ -467,7 +482,7 @@ local function buildWindow(state, opts)
 	local sidebar = new("ScrollingFrame", {
 		Name = "Sidebar",
 		Position = UDim2.fromOffset(14, 14),
-		Size = UDim2.new(0, 150, 1, -28),
+		Size = UDim2.new(0, sideW, 1, -28),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 0,
@@ -478,7 +493,7 @@ local function buildWindow(state, opts)
 
 	paint(
 		new("Frame", {
-			Position = UDim2.fromOffset(176, 18),
+			Position = UDim2.fromOffset(sideW + 26, 18),
 			Size = UDim2.new(0, 2, 1, -36),
 			BorderSizePixel = 0,
 			Parent = content,
@@ -489,8 +504,8 @@ local function buildWindow(state, opts)
 
 	local pages = new("Frame", {
 		Name = "Pages",
-		Position = UDim2.fromOffset(190, 14),
-		Size = UDim2.new(1, -204, 1, -28),
+		Position = UDim2.fromOffset(sideW + 40, 14),
+		Size = UDim2.new(1, -(sideW + 54), 1, -28),
 		BackgroundTransparency = 1,
 		Parent = content,
 	})
@@ -1071,6 +1086,7 @@ local function buildWindow(state, opts)
 			hit.InputBegan:Connect(function(input)
 				if isPointer(input) then
 					dragging = true
+					page.ScrollingEnabled = false
 					fromInput(input)
 				end
 			end)
@@ -1080,6 +1096,7 @@ local function buildWindow(state, opts)
 					UserInputService.InputEnded:Connect(function(input)
 						if isPointer(input) then
 							dragging = false
+							page.ScrollingEnabled = true
 						end
 					end)
 				)
@@ -1230,20 +1247,25 @@ local function buildWindow(state, opts)
 				return selected
 			end
 			for _, opt in ipairs(options) do
-				local ob = paint(
-					new("TextButton", {
+				local optFrame = paint(
+					new("Frame", {
 						Size = UDim2.new(1, 0, 0, 28),
 						BorderSizePixel = 0,
-						Text = opt,
-						TextColor3 = Theme.Text,
-						TextSize = 13,
-						Font = Theme.BodyFont,
-						AutoButtonColor = false,
 						Parent = list,
 					}, { corner(8) }),
 					Theme.InputGrad,
 					90
 				)
+				local ob = new("TextButton", {
+					BackgroundTransparency = 1,
+					Size = UDim2.fromScale(1, 1),
+					Text = opt,
+					TextColor3 = Theme.Text,
+					TextSize = 13,
+					Font = Theme.BodyFont,
+					AutoButtonColor = false,
+					Parent = optFrame,
+				})
 				buttons[opt] = ob
 				ob.MouseButton1Click:Connect(function()
 					api:Set(opt)
