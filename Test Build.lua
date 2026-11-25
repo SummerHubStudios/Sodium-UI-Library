@@ -290,6 +290,86 @@ local function setHexColor(hex, color)
 	end
 end
 
+local function makeDraggable(handle, target, gui, connections, options)
+	options = options or {}
+	local threshold = options.Threshold or 0
+	local dragging, moved = false, false
+	local activeType, startPointer, startTopLeft
+
+	local function screenSize()
+		local size = gui.AbsoluteSize
+		if size.X > 0 and size.Y > 0 then
+			return size
+		end
+		return viewport()
+	end
+
+	handle.InputBegan:Connect(function(input)
+		if dragging or not isPointer(input) then
+			return
+		end
+		dragging = true
+		moved = false
+		activeType = input.UserInputType
+		startPointer = Vector2.new(input.Position.X, input.Position.Y)
+		startTopLeft = target.AbsolutePosition
+	end)
+
+	if not UserInputService then
+		return
+	end
+
+	table.insert(
+		connections,
+		UserInputService.InputChanged:Connect(function(input)
+			if not dragging then
+				return
+			end
+			local t = input.UserInputType
+			local valid = (activeType == Enum.UserInputType.Touch and t == Enum.UserInputType.Touch)
+				or (activeType == Enum.UserInputType.MouseButton1 and t == Enum.UserInputType.MouseMovement)
+			if not valid then
+				return
+			end
+			local delta = Vector2.new(input.Position.X, input.Position.Y) - startPointer
+			if not moved then
+				if delta.Magnitude < threshold then
+					return
+				end
+				moved = true
+			end
+			local size, screen = target.AbsoluteSize, screenSize()
+			local topLeft = startTopLeft + delta
+			if options.KeepFullyVisible then
+				topLeft = Vector2.new(
+					math.clamp(topLeft.X, 0, math.max(screen.X - size.X, 0)),
+					math.clamp(topLeft.Y, 0, math.max(screen.Y - size.Y, 0))
+				)
+			else
+				topLeft = Vector2.new(
+					math.clamp(topLeft.X, 80 - size.X, math.max(screen.X - 80, 80 - size.X)),
+					math.clamp(topLeft.Y, 0, math.max(screen.Y - 60, 0))
+				)
+			end
+			local anchor, origin = target.AnchorPoint, gui.AbsolutePosition
+			target.Position = UDim2.fromOffset(topLeft.X + anchor.X * size.X - origin.X, topLeft.Y + anchor.Y * size.Y - origin.Y)
+		end)
+	)
+
+	table.insert(
+		connections,
+		UserInputService.InputEnded:Connect(function(input)
+			if not dragging or input.UserInputType ~= activeType then
+				return
+			end
+			dragging = false
+			if not moved then
+				safe(options.OnClick)
+			end
+		end)
+	)
+end
+
 local function buildWindow(state, opts)
 	opts = isTable(opts) and opts or {}
 	local title = str(opts.Title, "SODIUM")
@@ -302,21 +382,13 @@ local function buildWindow(state, opts)
 		toggleKey = Enum.KeyCode.RightShift
 	end
 
-	local mobile = opts.Mobile
-	if type(mobile) ~= "boolean" then
-		local ok, touchOnly = pcall(function()
-			return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-		end)
-		local vp0 = viewport()
-		mobile = (ok and touchOnly == true) or math.min(vp0.X, vp0.Y) < 500
-	end
+	local touch = false
+	pcall(function()
+		touch = UserInputService.TouchEnabled == true
+	end)
 	local baseW, baseH, sideW = 976, 614, 150
-	if mobile then
-		baseW, baseH, sideW = 640, 400, 110
-	end
 
 	local Window = {}
-	Window.IsMobile = mobile
 	Window.Tabs = {}
 	Window.Visible = true
 	state.Window = Window
@@ -395,11 +467,12 @@ local function buildWindow(state, opts)
 		90
 	)
 	Window.Main = main
+	main.Active = true
 
 	local scale = new("UIScale", { Parent = main })
 	local function updateScale()
 		local vp = viewport()
-		local mx, my = mobile and 24 or 160, mobile and 24 or 40
+		local mx, my = touch and 24 or 160, touch and 24 or 40
 		scale.Scale = math.clamp(math.min((vp.X - mx) / baseW, (vp.Y - my) / baseH), 0.3, 1)
 	end
 	updateScale()
@@ -593,53 +666,13 @@ local function buildWindow(state, opts)
 	closeBtn.MouseButton1Click:Connect(function()
 		Window:Minimize()
 	end)
-	do
-		local dragging, moved, trackedInput, startPos, startMouse = false, false, nil, nil, nil
-		local lastGood = minBtn.Position
-		minBtn.InputBegan:Connect(function(input)
-			if isPointer(input) then
-				dragging = true
-				moved = false
-				startMouse = input.Position
-				startPos = minBtn.Position
-				input.Changed:Connect(function()
-					if input.UserInputState == Enum.UserInputState.End then
-						dragging = false
-						if not moved then
-							Window:Restore()
-						end
-					end
-				end)
-			end
-		end)
-		minBtn.InputChanged:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-				trackedInput = input
-			end
-		end)
-		if UserInputService then
-			table.insert(
-				connections,
-				UserInputService.InputChanged:Connect(function(input)
-					if dragging and input == trackedInput then
-						local d = input.Position - startMouse
-						if d.Magnitude > 5 then
-							moved = true
-						end
-						if moved then
-							minBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-							local vp, ap, as = viewport(), minBtn.AbsolutePosition, minBtn.AbsoluteSize
-							if ap.X < 0 or ap.Y < 0 or ap.X + as.X > vp.X or ap.Y + as.Y > vp.Y then
-								minBtn.Position = lastGood
-							else
-								lastGood = minBtn.Position
-							end
-						end
-					end
-				end)
-			)
-		end
-	end
+	makeDraggable(minBtn, minBtn, gui, connections, {
+		Threshold = 8,
+		KeepFullyVisible = true,
+		OnClick = function()
+			Window:Restore()
+		end,
+	})
 
 	if UserInputService then
 		table.insert(
@@ -652,44 +685,7 @@ local function buildWindow(state, opts)
 		)
 	end
 
-	do
-		local dragging, trackedInput, startPos, startMouse
-		local lastGood = main.Position
-		titleBar.InputBegan:Connect(function(input)
-			if isPointer(input) then
-				dragging = true
-				startMouse = input.Position
-				startPos = main.Position
-				input.Changed:Connect(function()
-					if input.UserInputState == Enum.UserInputState.End then
-						dragging = false
-					end
-				end)
-			end
-		end)
-		titleBar.InputChanged:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-				trackedInput = input
-			end
-		end)
-		if UserInputService then
-			table.insert(
-				connections,
-				UserInputService.InputChanged:Connect(function(input)
-					if dragging and input == trackedInput then
-						local d = input.Position - startMouse
-						main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-						local vp, ap, as = viewport(), main.AbsolutePosition, main.AbsoluteSize
-						if ap.X > vp.X - 80 or ap.X + as.X < 80 or ap.Y < -10 or ap.Y > vp.Y - 60 then
-							main.Position = lastGood
-						else
-							lastGood = main.Position
-						end
-					end
-				end)
-			)
-		end
-	end
+	makeDraggable(titleBar, main, gui, connections, { Threshold = 2 })
 
 	function Window:Notify(o)
 		o = isTable(o) and o or { Content = str(o) }
